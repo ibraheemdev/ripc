@@ -1,0 +1,143 @@
+use std::io::Write;
+use std::iter::Peekable;
+
+macro_rules! error {
+    ($($arg:tt)*) => {{
+        eprint!("error: ");
+        eprint!($($arg)*);
+        eprint!("\n");
+        std::io::stdout().flush().unwrap();
+        std::process::exit(1);
+    }}
+}
+
+macro_rules! take_num {
+    ($tokens:ident) => {
+        match $tokens.next().map(|t| t.kind) {
+            Some(TokenKind::Num(num)) => num,
+            _ => error!("expected number"),
+        }
+    };
+}
+
+#[derive(PartialEq, Eq)]
+enum TokenKind {
+    Add,
+    Sub,
+    Num(isize),
+    Eof,
+}
+
+struct Token {
+    kind: TokenKind,
+    byte: u8,
+    len: usize,
+}
+
+struct Tokens(Vec<Token>);
+
+impl Tokens {
+    fn peek(&self) -> Option<&Token> {
+        self.0.last()
+    }
+
+    fn next(&mut self) -> Option<Token> {
+        self.0.pop()
+    }
+}
+
+impl Tokens {
+    fn tokenize(input: String) -> Self {
+        let mut tokens = Vec::new();
+        let mut bytes = input.bytes().peekable();
+
+        while let Some(byte) = bytes.next() {
+            if byte.is_ascii_whitespace() {
+                continue;
+            }
+
+            if byte.is_ascii_digit() {
+                let (num, len) = take_num(&mut bytes);
+                tokens.push(Token {
+                    kind: TokenKind::Num(num),
+                    byte,
+                    len,
+                });
+                continue;
+            }
+
+            if byte == b'+' {
+                tokens.push(Token {
+                    kind: TokenKind::Add,
+                    len: 1,
+                    byte,
+                });
+                continue;
+            }
+
+            if byte == b'-' {
+                tokens.push(Token {
+                    kind: TokenKind::Sub,
+                    len: 1,
+                    byte,
+                });
+                continue;
+            }
+
+            error!("invalid token");
+        }
+
+        tokens.push(Token {
+            kind: TokenKind::Eof,
+            len: 1,
+            byte: b' ',
+        });
+
+        return Self(tokens);
+    }
+}
+
+fn main() {
+    let input = std::env::args().nth(1).unwrap_or_else(|| {
+        eprintln!("error: invalid number of arguments");
+        std::process::exit(1);
+    });
+
+    let mut tokens = Tokens::tokenize(input);
+
+    println!("  .globl main");
+    println!("main:");
+
+    println!("  mov ${}, %rax", take_num!(tokens));
+
+    while let Some(token) = tokens.next() {
+        match token.kind {
+            TokenKind::Add => {
+                println!("  add ${}, %rax", take_num!(tokens));
+            }
+            TokenKind::Sub => {
+                println!("  sub ${}, %rax", take_num!(tokens));
+            }
+            TokenKind::Eof => {
+                break;
+            }
+            _ => error!("invalid token"),
+        }
+    }
+
+    println!("  ret");
+}
+
+fn take_num(tokens: &mut Peekable<impl Iterator<Item = u8>>) -> (isize, usize) {
+    let mut val = 0_isize;
+    let mut took = 0;
+    while let Some(token) = tokens.peek() {
+        if !token.is_ascii_digit() {
+            break;
+        }
+        val = val * 10 + *token as isize;
+        took += 1;
+        tokens.next();
+    }
+    (val, took)
+}

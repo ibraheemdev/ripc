@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::io::Write;
 
 macro_rules! error {
@@ -26,7 +25,7 @@ fn main() {
         std::process::exit(1);
     });
 
-    let mut tokens = lex(input);
+    let mut tokens = Lexer::new(input);
 
     println!("  .globl main");
     println!("main:");
@@ -59,50 +58,58 @@ enum Token {
     Eof,
 }
 
-#[derive(Debug)]
-struct Tokens(VecDeque<Token>);
+struct Lexer {
+    input: Vec<u8>,
+    pos: usize,
+    done: bool,
+}
 
-impl Tokens {
-    fn next(&mut self) -> Option<Token> {
-        self.0.pop_front()
+impl Lexer {
+    fn new(input: String) -> Self {
+        Self {
+            input: input.into_bytes(),
+            pos: 0,
+            done: false,
+        }
     }
 }
 
-fn lex(input: String) -> Tokens {
-    let mut tokens = VecDeque::new();
-    let bytes = input.into_bytes();
+impl Iterator for Lexer {
+    type Item = Token;
 
-    let mut i = 0;
-    while let Some(&byte) = bytes.get(i) {
-        match byte {
-            b'+' => {
-                tokens.push_back(Token::Add);
-                i += 1;
-                continue;
-            }
-            b'-' => {
-                tokens.push_back(Token::Sub);
-                i += 1;
-                continue;
-            }
-            b'0'..=b'9' => {
-                let (num, len) = take_num(&bytes[i..]);
-                tokens.push_back(Token::Num(num));
-                i += len;
-                continue;
-            }
-            b if b.is_ascii_whitespace() => {
-                i += 1;
-                continue;
-            }
-            _ => {
-                error!("invalid token");
+    fn next(&mut self) -> Option<Token> {
+        if self.done {
+            return None;
+        }
+
+        while let Some(&byte) = self.input.get(self.pos) {
+            match byte {
+                b'+' => {
+                    self.pos += 1;
+                    return Some(Token::Add);
+                }
+                b'-' => {
+                    self.pos += 1;
+                    return Some(Token::Sub);
+                }
+                b'0'..=b'9' => {
+                    let (num, len) = take_num(&self.input[self.pos..]);
+                    self.pos += len;
+                    return Some(Token::Num(num));
+                }
+                b if b.is_ascii_whitespace() => {
+                    self.pos += 1;
+                    continue;
+                }
+                _ => {
+                    error!("invalid token");
+                }
             }
         }
-    }
 
-    tokens.push_back(Token::Eof);
-    return Tokens(tokens);
+        self.done = true;
+        Some(Token::Eof)
+    }
 }
 
 fn take_num(bytes: &[u8]) -> (usize, usize) {
