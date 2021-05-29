@@ -1,6 +1,7 @@
+use std::error::Error as StdError;
 use std::io::{self, Write};
-use std::rc::Rc;
-use std::{fmt, slice, str};
+use std::ops::Range;
+use std::{fmt, str};
 
 fn main() {
     let input = std::env::args().nth(1).unwrap_or_else(|| {
@@ -8,37 +9,35 @@ fn main() {
         std::process::exit(1)
     });
 
-    let input = Rc::new(input);
+    let mut reporter = ErrorReporter::new(io::stderr(), &input);
 
-    let mut reporter = ErrorReporter::new(io::stderr(), input.clone());
-
-    match compile(input.clone()) {
+    match compile(&input) {
         Ok(()) => {}
         Err(e) => reporter.exit(e),
     }
 }
 
-struct ErrorReporter<W> {
+struct ErrorReporter<'a, W> {
     writer: W,
-    input: Rc<String>,
+    input: &'a str,
 }
 
-impl<W: Write> ErrorReporter<W> {
-    fn new(writer: W, input: Rc<String>) -> Self {
+impl<'a, W: Write> ErrorReporter<'a, W> {
+    fn new(writer: W, input: &'a str) -> Self {
         Self { writer, input }
     }
 
     fn report(&mut self, err: Error) -> Result<(), io::Error> {
         match err {
-            Error::Lex(err) => self.report_spanned(err),
-            Error::Parse(err) => self.report_spanned(err),
+            Error::Lex(err) => self.report_spanned(err, err.span),
+            Error::Parse(err) => self.report_spanned(err, err.span),
         }
     }
 
-    fn report_spanned(&mut self, err: Spannned<impl fmt::Display>) -> Result<(), io::Error> {
-        write!(self.writer, "[error]: {}\n", err.inner.as_ref().unwrap())?;
-        write!(self.writer, "{}\n", &*self.input)?;
-        write!(self.writer, "{:rep$}^ \n", "", rep = err.start)
+    fn report_spanned(&mut self, err: impl StdError, span: Span) -> Result<(), io::Error> {
+        write!(self.writer, "[error]: {}\n", err)?;
+        write!(self.writer, "{}\n", self.input)?;
+        write!(self.writer, "{:space$}^ \n", "", space = span.start)
     }
 
     fn exit(&mut self, err: Error) -> ! {
@@ -47,190 +46,244 @@ impl<W: Write> ErrorReporter<W> {
     }
 }
 
-struct Spannned<T> {
-    inner: Option<T>,
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Span {
     start: usize,
-    _end: usize,
+    end: usize,
 }
 
-impl<T> Spannned<T> {
-    fn new(range: std::ops::Range<usize>) -> Self {
-        Self {
-            inner: None,
-            start: range.start,
-            _end: range.end,
-        }
+impl Span {
+    fn new(Range { start, end }: Range<usize>) -> Self {
+        Self { start, end }
     }
 
-    fn with(mut self, inner: T) -> Self {
-        self.inner = Some(inner);
-        self
+    fn range(&self) -> Range<usize> {
+        self.start..self.end
     }
 }
 
+#[derive(Debug)]
 enum Error {
-    Lex(Spannned<LexError>),
-    Parse(Spannned<ParseError>),
+    Lex(LexError),
+    Parse(ParseError),
 }
 
-impl From<Spannned<LexError>> for Error {
-    fn from(err: Spannned<LexError>) -> Self {
+impl From<LexError> for Error {
+    fn from(err: LexError) -> Self {
         Self::Lex(err)
     }
 }
 
-impl From<Spannned<ParseError>> for Error {
-    fn from(err: Spannned<ParseError>) -> Self {
+impl From<ParseError> for Error {
+    fn from(err: ParseError) -> Self {
         Self::Parse(err)
     }
 }
 
+impl StdError for Error {}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Lex(ref err) => fmt::Display::fmt(err.inner.as_ref().unwrap(), f),
-            Self::Parse(ref err) => fmt::Display::fmt(err.inner.as_ref().unwrap(), f),
+            Self::Lex(ref err) => fmt::Display::fmt(err, f),
+            Self::Parse(ref err) => fmt::Display::fmt(err, f),
         }
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum LexError {
-    InvalidCharacter(u8),
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+struct LexError {
+    kind: LexErrorKind,
+    span: Span,
 }
+
+impl LexError {
+    fn new(kind: LexErrorKind, span: Span) -> Self {
+        Self { kind, span }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum LexErrorKind {
+    InvalidCharacter(char),
+}
+
+impl StdError for LexError {}
 
 impl fmt::Display for LexError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidCharacter(ch) => write!(
-                f,
-                "Invalid character '{}'",
-                str::from_utf8(slice::from_ref(ch)).unwrap()
-            ),
+        match self.kind {
+            LexErrorKind::InvalidCharacter(ch) => write!(f, "Invalid character '{}'", ch),
         }
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum Token {
+struct Token {
+    kind: TokenKind,
+    span: Span,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+enum TokenKind {
     Add,
     Sub,
     Num(usize),
+    Whitespace,
     Eof,
 }
 
-struct Lexer {
-    input: Rc<String>,
-    pos: usize,
-    done: bool,
+struct Lexer<'a> {
+    peeked: Option<Option<char>>,
+    chars: str::Chars<'a>,
+    source: &'a str,
+    start: usize,
+    end: usize,
+    eof: bool,
 }
 
-impl Lexer {
-    fn new(input: Rc<String>) -> Self {
+impl<'a> Lexer<'a> {
+    fn new(source: &'a str) -> Self {
         Self {
-            input,
-            pos: 0,
-            done: false,
+            chars: source.chars(),
+            source,
+            peeked: None,
+            start: 0,
+            end: 0,
+            eof: false,
+        }
+    }
+
+    fn peek(&mut self) -> Option<&char> {
+        let chars = &mut self.chars;
+        self.peeked.get_or_insert_with(|| chars.next()).as_ref()
+    }
+
+    fn chomp(&mut self) -> Option<char> {
+        self.end += 1;
+        match self.peeked.take() {
+            Some(v) => v,
+            None => self.chars.next(),
+        }
+    }
+
+    fn span(&self) -> Span {
+        Span::new(self.start..self.end)
+    }
+
+    fn chomp_while(&mut self, f: impl Fn(&char) -> bool + Copy) {
+        while self.peek().map(f).unwrap_or(false) {
+            self.chomp();
         }
     }
 }
 
-impl Iterator for Lexer {
-    type Item = Result<Token, Spannned<LexError>>;
+impl Iterator for Lexer<'_> {
+    type Item = Result<Token, LexError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.done {
-            return None;
-        }
+        use LexErrorKind::*;
+        use TokenKind::*;
 
-        while let Some(&byte) = self.input.as_bytes().get(self.pos) {
-            let some = match byte {
-                b'+' => {
-                    self.pos += 1;
-                    Ok(Token::Add)
+        self.start = self.end;
+        if let Some(ch) = self.chomp() {
+            let kind = match ch {
+                '+' => Add,
+                '-' => Sub,
+                '0'..='9' => {
+                    self.chomp_while(|x| x.is_ascii_digit());
+                    self.source[self.span().range()]
+                        .parse::<usize>()
+                        .map(Num)
+                        .unwrap()
                 }
-                b'-' => {
-                    self.pos += 1;
-                    Ok(Token::Sub)
+                ch if ch.is_ascii_whitespace() => {
+                    self.chomp_while(|x| x.is_ascii_whitespace());
+                    Whitespace
                 }
-                b'0'..=b'9' => {
-                    let (num, len) = take_num(&self.input.as_bytes()[self.pos..]);
-                    self.pos += len;
-                    Ok(Token::Num(num))
-                }
-                b if b.is_ascii_whitespace() => {
-                    self.pos += 1;
-                    continue;
-                }
-                b => Err(Spannned::new(self.pos..self.pos + 1).with(LexError::InvalidCharacter(b))),
+                ch => return Some(Err(LexError::new(InvalidCharacter(ch), self.span()))),
             };
-            return Some(some);
+
+            let token = Token {
+                kind,
+                span: self.span(),
+            };
+            return Some(Ok(token));
         }
 
-        self.done = true;
-        Some(Ok(Token::Eof))
+        self.eof = true;
+        let token = Token {
+            kind: TokenKind::Eof,
+            span: self.span(),
+        };
+        return Some(Ok(token));
     }
 }
 
-fn take_num(bytes: &[u8]) -> (usize, usize) {
-    let mut val = 0_usize;
-    let mut len = 0;
-
-    for &byte in bytes {
-        match byte_to_ascii_digit(byte) {
-            Some(digit) => {
-                val = val * 10 + digit as usize;
-                len += 1;
-            }
-            None => break,
-        }
-    }
-    (val, len)
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+struct ParseError {
+    kind: ParseErrorKind,
+    span: Span,
 }
 
-fn byte_to_ascii_digit(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        _ => None,
+impl ParseError {
+    fn new(kind: ParseErrorKind, span: Span) -> Self {
+        Self { kind, span }
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum ParseError {
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum ParseErrorKind {
     ExpectedNumber,
     InvalidToken,
 }
 
+impl StdError for ParseError {}
+
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ExpectedNumber => write!(f, "Expected number"),
-            Self::InvalidToken => write!(f, "Invalid token"),
+        match self.kind {
+            ParseErrorKind::ExpectedNumber => write!(f, "Expected number"),
+            ParseErrorKind::InvalidToken => write!(f, "Invalid token"),
         }
     }
 }
 
-struct Parser {
-    tokens: Lexer,
+struct Parser<'a> {
+    tokens: Lexer<'a>,
 }
 
-impl Parser {
+impl<'a> Parser<'a> {
+    fn should_skip(tok: &TokenKind) -> bool {
+        matches!(tok, TokenKind::Whitespace)
+    }
+
     fn next_num(&mut self) -> Result<usize, Error> {
-        let start = self.tokens.pos;
-        match self.tokens.next() {
-            Some(Err(e)) => Err(e.into()),
-            Some(Ok(Token::Num(num))) => Ok(num),
-            _ => {
-                let end = self.tokens.pos;
-                Err(Spannned::new(start..end)
-                    .with(ParseError::ExpectedNumber)
-                    .into())
+        loop {
+            let token = self.tokens.next().transpose()?;
+            match token.map(|x| x.kind) {
+                Some(TokenKind::Num(num)) => return Ok(num),
+                Some(ref x) if Self::should_skip(x) => continue,
+                Some(_) => {
+                    return Err(Error::Parse(ParseError::new(
+                        ParseErrorKind::ExpectedNumber,
+                        self.tokens.span(),
+                    )))
+                }
+                None => {
+                    return Err(Error::Parse(ParseError::new(
+                        ParseErrorKind::ExpectedNumber,
+                        self.tokens.span(),
+                    )))
+                }
             }
         }
     }
 }
 
-fn compile(input: Rc<String>) -> Result<(), Error> {
+fn compile<'a>(input: &'a str) -> Result<(), Error> {
+    use ParseErrorKind::*;
+    use TokenKind::*;
+
     let tokens = Lexer::new(input);
     let mut parser = Parser { tokens };
 
@@ -240,23 +293,18 @@ fn compile(input: Rc<String>) -> Result<(), Error> {
     println!("  mov ${}, %rax", parser.next_num()?);
 
     while let Some(token) = parser.tokens.next() {
-        let start = parser.tokens.pos;
-        match token? {
-            Token::Add => {
+        let token = token?;
+
+        match token.kind {
+            Whitespace => continue,
+            Add => {
                 println!("  add ${}, %rax", parser.next_num()?);
             }
-            Token::Sub => {
+            Sub => {
                 println!("  sub ${}, %rax", parser.next_num()?);
             }
-            Token::Eof => {
-                break;
-            }
-            _ => {
-                let end = parser.tokens.pos;
-                return Err(Error::Parse(
-                    Spannned::new(start..end).with(ParseError::InvalidToken),
-                ));
-            }
+            Eof => break,
+            _ => return Err(Error::Parse(ParseError::new(InvalidToken, token.span))),
         }
     }
 
