@@ -15,7 +15,7 @@ where
         Self { out }
     }
 
-    pub fn emit(mut self, expr: &Expr) -> Result<(), Error> {
+    pub fn write(mut self, expr: &Expr) -> Result<(), Error> {
         match &expr.kind {
             ExprKind::Lit(WithSpan {
                 value: Lit::String(ref str),
@@ -85,16 +85,29 @@ where
     }
 
     fn emit_binary(&mut self, expr: &BinaryExpr) -> Result<(), Error> {
-        let op = match expr.op.value {
-            BinaryOp::Sub => "sub",
-            BinaryOp::Add => "add",
-        };
-
         self.emit_int_expr(&expr.left)?;
-        write!(self.out, "mov %eax, %ebx\n\t").unwrap();
-
+        write!(self.out, "push %rax\n\t").unwrap();
         self.emit_int_expr(&expr.right)?;
-        write!(self.out, "{} %ebx, %eax\n\t", op).unwrap();
+
+        match expr.op.value {
+            BinaryOp::Div => {
+                write!(self.out, "mov %eax, %ebx\n\t").unwrap();
+                write!(self.out, "pop %rax\n\t").unwrap();
+                write!(self.out, "mov $0, %edx\n\t").unwrap();
+                write!(self.out, "idiv %ebx\n\t").unwrap();
+            }
+            ref op => {
+                let op = match op {
+                    BinaryOp::Sub => "sub",
+                    BinaryOp::Add => "add",
+                    BinaryOp::Mul => "imul",
+                    BinaryOp::Div => unreachable!(),
+                };
+
+                write!(self.out, "pop %rax\n\t").unwrap();
+                write!(self.out, "{} %ebx, %eax\n\t", op).unwrap();
+            }
+        }
 
         Ok(())
     }

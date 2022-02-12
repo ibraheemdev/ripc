@@ -21,6 +21,19 @@ pub enum Lit {
 pub enum BinaryOp {
     Sub,
     Add,
+    Mul,
+    Div,
+}
+
+impl BinaryOp {
+    fn precedence(&self) -> usize {
+        match self {
+            BinaryOp::Sub => 1,
+            BinaryOp::Add => 1,
+            BinaryOp::Mul => 2,
+            BinaryOp::Div => 2,
+        }
+    }
 }
 
 pub struct BinaryExpr {
@@ -30,50 +43,69 @@ pub struct BinaryExpr {
 }
 
 pub struct Parser<'a> {
-    lexer: SkipWhiteSpace<'a>,
-    pos: usize,
+    tokens: Tokens<'a>,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(lexer: Lexer<'a>) -> Self {
         Self {
-            lexer: SkipWhiteSpace { lexer },
-            pos: 0,
+            tokens: Tokens {
+                lexer,
+                peeked: None,
+            },
         }
     }
 
+    fn peek(&mut self) -> Result<Option<Token<'a>>, lex::Error> {
+        self.tokens.peek().copied().transpose()
+    }
+
     fn next(&mut self) -> Result<Option<Token<'a>>, lex::Error> {
-        self.pos += 1;
-        self.lexer.next().transpose()
+        self.tokens.next().transpose()
+    }
+
+    fn chomp(&mut self) {
+        let _ = self.next().unwrap();
     }
 
     pub fn expr(&mut self) -> Result<Expr, Error> {
-        let primary = self.primary()?;
-        self.expr_inner(primary)
+        self.expr_inner(0)
     }
 
-    pub fn expr_inner(&mut self, expr: Expr) -> Result<Expr, Error> {
-        let token = match self.next()? {
-            Some(t) => t,
-            None => return Ok(expr),
-        };
+    pub fn expr_inner(&mut self, precedence: usize) -> Result<Expr, Error> {
+        let mut expr = self.primary()?;
 
-        let op = match token.kind {
-            TokenKind::Add => BinaryOp::Add,
-            TokenKind::Sub => BinaryOp::Sub,
-            _ => return Err(Error::new(ErrorKind::ExpectedOperator, token.span)),
-        };
+        loop {
+            let token = match self.peek()? {
+                Some(t) => t,
+                None => return Ok(expr),
+            };
 
-        let right = self.primary()?;
+            let op = match token.kind {
+                TokenKind::Add => BinaryOp::Add,
+                TokenKind::Sub => BinaryOp::Sub,
+                TokenKind::Mul => BinaryOp::Mul,
+                TokenKind::Div => BinaryOp::Div,
+                _ => return Err(Error::new(ErrorKind::ExpectedOperator, token.span)),
+            };
 
-        self.expr_inner(Expr {
-            span: expr.span + right.span,
-            kind: ExprKind::Binary(BinaryExpr {
-                op: WithSpan::new(op, token.span),
-                left: Box::new(expr),
-                right: Box::new(right),
-            }),
-        })
+            if op.precedence() < precedence {
+                return Ok(expr);
+            }
+
+            self.chomp();
+
+            let right = self.expr_inner(op.precedence() + 1)?;
+
+            expr = Expr {
+                span: expr.span + right.span,
+                kind: ExprKind::Binary(BinaryExpr {
+                    op: WithSpan::new(op, token.span),
+                    left: Box::new(expr),
+                    right: Box::new(right),
+                }),
+            };
+        }
     }
 
     fn primary(&mut self) -> Result<Expr, Error> {
@@ -82,7 +114,7 @@ impl<'a> Parser<'a> {
             None => {
                 return Err(Error::new(
                     ErrorKind::ExpectedExpression,
-                    self.lexer.current_span(),
+                    self.tokens.current_span(),
                 ));
             }
         };
@@ -148,7 +180,7 @@ impl<W: Write> Report<W> for Error {
             ),
             ExpectedOperator => write!(
                 f.out,
-                "Expected expression, found '{}'",
+                "Expected binary operator, found '{}'",
                 self.span.range().map(|x| &f.source[x]).unwrap_or("EOF")
             ),
             ExpectedNumber => write!(f.out, "Expected number"),
@@ -157,16 +189,29 @@ impl<W: Write> Report<W> for Error {
     }
 }
 
-pub struct SkipWhiteSpace<'a> {
+pub struct Tokens<'a> {
     lexer: Lexer<'a>,
+    peeked: Option<Option<Result<Token<'a>, lex::Error>>>,
 }
 
-impl<'a> Iterator for SkipWhiteSpace<'a> {
+impl<'a> Tokens<'a> {
+    pub fn peek(&mut self) -> Option<&Result<Token<'a>, lex::Error>> {
+        let lexer = &mut self.lexer;
+        self.peeked.get_or_insert_with(|| lexer.next()).as_ref()
+    }
+}
+
+impl<'a> Iterator for Tokens<'a> {
     type Item = Result<Token<'a>, lex::Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            match self.lexer.next() {
+            let token = match self.peeked.take() {
+                Some(v) => v,
+                None => self.lexer.next(),
+            };
+
+            match token {
                 Some(Ok(Token {
                     kind: TokenKind::Whitespace,
                     ..
@@ -177,7 +222,7 @@ impl<'a> Iterator for SkipWhiteSpace<'a> {
     }
 }
 
-impl<'a> std::ops::Deref for SkipWhiteSpace<'a> {
+impl<'a> std::ops::Deref for Tokens<'a> {
     type Target = Lexer<'a>;
 
     fn deref(&self) -> &Self::Target {

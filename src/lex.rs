@@ -15,6 +15,8 @@ pub struct Token<'a> {
 pub enum TokenKind<'a> {
     Add,
     Sub,
+    Mul,
+    Div,
     Num(usize),
     Str(&'a str),
     Whitespace,
@@ -88,6 +90,8 @@ impl<'a> Iterator for Lexer<'a> {
             let kind = match ch {
                 '+' => Add,
                 '-' => Sub,
+                '/' => Div,
+                '*' => Mul,
                 '0'..='9' => {
                     self.chomp_while(char::is_ascii_digit);
                     Num(self.slice().parse().unwrap())
@@ -137,14 +141,18 @@ impl<'a> Iterator for Lexer<'a> {
 
 impl<'a> fmt::Display for TokenKind<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            TokenKind::Add => write!(f, "+"),
-            TokenKind::Sub => write!(f, "-"),
-            TokenKind::Num(num) => write!(f, "{}", num),
-            TokenKind::Str(str) => write!(f, "{}", str),
-            TokenKind::Whitespace => write!(f, " "),
-            TokenKind::Eof => write!(f, "eof"),
-        }
+        let x = match *self {
+            TokenKind::Add => "+",
+            TokenKind::Sub => "+",
+            TokenKind::Mul => "*",
+            TokenKind::Div => "/",
+            TokenKind::Whitespace => " ",
+            TokenKind::Eof => "EOF",
+            TokenKind::Str(str) => str,
+            TokenKind::Num(num) => return write!(f, "{}", num),
+        };
+
+        write!(f, "{}", x)
     }
 }
 
