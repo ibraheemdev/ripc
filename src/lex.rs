@@ -17,8 +17,11 @@ pub enum TokenKind<'a> {
     Sub,
     Mul,
     Div,
+    Semi,
+    Assign,
     Num(usize),
     Str(&'a str),
+    Ident(&'a str),
     Whitespace,
     Eof,
 }
@@ -119,6 +122,12 @@ impl<'a> Iterator for Lexer<'a> {
 
                     self.chomp();
                 },
+                ';' => TokenKind::Semi,
+                '=' => TokenKind::Assign,
+                ch if ch.is_alphabetic() => {
+                    self.chomp_while(|c| c.is_alphanumeric());
+                    TokenKind::Ident(self.slice())
+                }
                 ch => return Some(Err(Error::new(InvalidCharacter(ch), self.span))),
             };
 
@@ -147,9 +156,12 @@ impl<'a> fmt::Display for TokenKind<'a> {
             TokenKind::Mul => "*",
             TokenKind::Div => "/",
             TokenKind::Whitespace => " ",
+            TokenKind::Semi => ";",
+            TokenKind::Assign => "=",
             TokenKind::Eof => "EOF",
             TokenKind::Str(str) => str,
             TokenKind::Num(num) => return write!(f, "{}", num),
+            TokenKind::Ident(_) => todo!(),
         };
 
         write!(f, "{}", x)

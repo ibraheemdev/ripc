@@ -1,13 +1,13 @@
 use crate::codegen::{self, Codegen};
-use crate::parse::Expr;
+use crate::parse::Ast;
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
 use std::io::{self, Write};
 
-pub fn emit(expr: &Expr) -> Result<(), codegen::Error> {
+pub fn emit(ast: &Ast) -> Result<(), codegen::Error> {
     let mut out = Vec::new();
-    Codegen::new(&mut out).write(&expr)?;
+    Codegen::new(&mut out).write(&ast)?;
 
     match std::fs::create_dir("./ripc-target") {
         Err(err) if err.kind() != io::ErrorKind::AlreadyExists => {
@@ -32,6 +32,7 @@ pub fn emit(expr: &Expr) -> Result<(), codegen::Error> {
 
     std::process::Command::new("as")
         .arg(&asm_file)
+        .arg("-g")
         .arg("-o")
         .arg(&out_file)
         .status()

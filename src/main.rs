@@ -29,7 +29,7 @@ fn main() {
 
 fn run(input: &str) -> Result<(), Box<dyn Report<std::io::Stderr>>> {
     let lexer = Lexer::new(input);
-    let expr = Parser::new(lexer).expr()?;
+    let expr = Parser::new(lexer).parse()?;
     emit::emit(&expr)?;
 
     Ok(())
