@@ -24,15 +24,28 @@ where
                 self.emit_string(str)?;
             }
             _ => {
-                write!(self.out, ".text\n\t").unwrap();
-                write!(self.out, ".global main\n").unwrap();
-                write!(self.out, "main:\n\t").unwrap();
-
-                self.emit_int_expr(expr)?;
-
-                write!(self.out, "ret\n").unwrap();
+                self.emit_start();
+                self.emit_main(expr)?;
             }
         }
+
+        Ok(())
+    }
+
+    fn emit_start(&mut self) {
+        write!(self.out, ".text\n\t").unwrap();
+        write!(self.out, ".global _start\n").unwrap();
+
+        write!(self.out, "_start:\n\t").unwrap();
+        write!(self.out, "call main\n\t").unwrap();
+        write!(self.out, "mov $1, %eax\n\t").unwrap();
+        write!(self.out, "int $0x80\n").unwrap();
+    }
+
+    fn emit_main(&mut self, expr: &Expr) -> Result<(), Error> {
+        write!(self.out, "main:\n\t").unwrap();
+        self.emit_int_expr(expr)?;
+        write!(self.out, "ret\n").unwrap();
 
         Ok(())
     }
@@ -48,7 +61,7 @@ where
         write!(self.out, ".text\n\t").unwrap();
         write!(self.out, ".global stringfn\n").unwrap();
         write!(self.out, "stringfn:\n\t").unwrap();
-        write!(self.out, "lea .mydata(%%rip), %%rax\n\t").unwrap();
+        write!(self.out, "lea .mydata(%rip), %rax\n\t").unwrap();
         write!(self.out, "ret\n").unwrap();
 
         Ok(())
@@ -60,7 +73,7 @@ where
                 value: Lit::Num(num),
                 ..
             }) => {
-                write!(self.out, "mov ${}, %%eax\n\t", num).unwrap();
+                write!(self.out, "mov ${}, %eax\n\t", num).unwrap();
             }
             ExprKind::Binary(expr) => {
                 self.emit_binary(expr)?;
@@ -78,10 +91,10 @@ where
         };
 
         self.emit_int_expr(&expr.left)?;
-        write!(self.out, "mov %%eax, %%ebx\n\t").unwrap();
+        write!(self.out, "mov %eax, %ebx\n\t").unwrap();
 
         self.emit_int_expr(&expr.right)?;
-        write!(self.out, "{} %%ebx, %%eax\n\t", op).unwrap();
+        write!(self.out, "{} %ebx, %eax\n\t", op).unwrap();
 
         Ok(())
     }
