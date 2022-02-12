@@ -31,9 +31,7 @@ fn main() {
 fn run(input: &str) -> Result<(), Box<dyn Report<io::Stderr>>> {
     let lexer = Lexer::new(input);
     let expr = Parser::new(lexer).expr()?;
-    Codegen::new(io::stdout())
-        .emit(&expr)
-        .expect("failed to write to stdout");
+    Codegen::new(io::stdout()).emit(&expr)?;
 
     Ok(())
 }

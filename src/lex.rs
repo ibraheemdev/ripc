@@ -25,6 +25,7 @@ pub struct Lexer<'a> {
     chars: Peekable<Chars<'a>>,
     source: &'a str,
     span: Span,
+    eof: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -33,6 +34,7 @@ impl<'a> Lexer<'a> {
             chars: source.chars().peekable(),
             source,
             span: Span::default(),
+            eof: false,
         }
     }
 
@@ -45,8 +47,10 @@ impl<'a> Lexer<'a> {
     }
 
     fn chomp(&mut self) -> Option<char> {
-        self.span.end += 1;
-        self.chars.next()
+        self.chars.next().map(|x| {
+            self.span.end += 1;
+            x
+        })
     }
 
     fn slice(&self) -> &'a str {
@@ -64,7 +68,11 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn current_span(&self) -> Span {
-        self.span
+        if self.eof {
+            Span::EOF
+        } else {
+            self.span
+        }
     }
 }
 
@@ -99,13 +107,20 @@ impl<'a> Iterator for Lexer<'a> {
                             self.chomp();
                         }
                         Some(_) => {}
-                        None => return Some(Err(Error::new(UnexpectedEof, self.span))),
+                        None => {
+                            self.eof = true;
+                            return Some(Err(Error::new(UnexpectedEof, self.span)));
+                        }
                     }
 
                     self.chomp();
                 },
                 ch => return Some(Err(Error::new(InvalidCharacter(ch), self.span))),
             };
+
+            if self.peek().is_none() {
+                self.eof = true;
+            }
 
             let token = Token {
                 kind,
@@ -115,6 +130,7 @@ impl<'a> Iterator for Lexer<'a> {
             return Some(Ok(token));
         }
 
+        self.eof = true;
         None
     }
 }

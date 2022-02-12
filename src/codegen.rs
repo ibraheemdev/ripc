@@ -16,21 +16,23 @@ where
     }
 
     pub fn emit(mut self, expr: &Expr) -> Result<(), Error> {
-        if let ExprKind::Lit(WithSpan {
-            value: Lit::String(ref str),
-            ..
-        }) = &expr.kind
-        {
-            self.emit_string(str)?;
+        match &expr.kind {
+            ExprKind::Lit(WithSpan {
+                value: Lit::String(ref str),
+                ..
+            }) => {
+                self.emit_string(str)?;
+            }
+            _ => {
+                write!(self.out, ".text\n\t").unwrap();
+                write!(self.out, ".global main\n").unwrap();
+                write!(self.out, "main:\n\t").unwrap();
+
+                self.emit_int_expr(expr)?;
+
+                write!(self.out, "ret\n").unwrap();
+            }
         }
-
-        write!(self.out, ".text\n\t").unwrap();
-        write!(self.out, ".global main\n").unwrap();
-        write!(self.out, "main:\n\t").unwrap();
-
-        self.emit_int_expr(expr)?;
-
-        write!(self.out, "ret\n").unwrap();
 
         Ok(())
     }

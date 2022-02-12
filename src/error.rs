@@ -24,7 +24,14 @@ where
         write!(self.out, "[error]: ")?;
         err.report(self)?;
         writeln!(self.out, "\n{}", self.source)?;
-        write!(self.out, "{:space$}^ \n", "", space = err.span().start)
+
+        let pad = if err.span() == Span::EOF {
+            self.source.len()
+        } else {
+            err.span().start
+        };
+
+        write!(self.out, "{:pad$}^ \n", "")
     }
 
     pub fn exit(&mut self, err: impl Report<W>) -> ! {

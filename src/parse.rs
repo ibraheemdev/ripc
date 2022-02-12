@@ -83,7 +83,7 @@ impl<'a> Parser<'a> {
                 return Err(Error::new(
                     ErrorKind::ExpectedExpression,
                     self.lexer.current_span(),
-                ))
+                ));
             }
         };
 
