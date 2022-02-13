@@ -23,7 +23,9 @@ pub enum TokenKind<'a> {
     Str(&'a str),
     Ident(&'a str),
     Whitespace,
-    Eof,
+    OpenParen,
+    CloseParen,
+    Comma,
 }
 
 pub struct Lexer<'a> {
@@ -124,6 +126,9 @@ impl<'a> Iterator for Lexer<'a> {
                 },
                 ';' => TokenKind::Semi,
                 '=' => TokenKind::Assign,
+                '(' => TokenKind::OpenParen,
+                ')' => TokenKind::CloseParen,
+                ',' => TokenKind::Comma,
                 ch if ch.is_alphabetic() => {
                     self.chomp_while(|c| c.is_alphanumeric());
                     TokenKind::Ident(self.slice())
@@ -158,7 +163,9 @@ impl<'a> fmt::Display for TokenKind<'a> {
             TokenKind::Whitespace => " ",
             TokenKind::Semi => ";",
             TokenKind::Assign => "=",
-            TokenKind::Eof => "EOF",
+            TokenKind::OpenParen => "(",
+            TokenKind::CloseParen => ")",
+            TokenKind::Comma => ",",
             TokenKind::Str(str) => str,
             TokenKind::Num(num) => return write!(f, "{}", num),
             TokenKind::Ident(_) => todo!(),

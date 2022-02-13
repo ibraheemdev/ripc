@@ -1,4 +1,4 @@
-use crate::parse::{Ast, BinaryExpr, BinaryOp, Expr, ExprKind, Lit};
+use crate::parse::{Ast, BinaryExpr, BinaryOp, Call, Expr, ExprKind, Lit};
 use crate::{Report, Reporter, Span, Spanned, WithSpan};
 
 use std::io::Write;
@@ -16,7 +16,7 @@ where
     }
 
     pub fn write(mut self, ast: &Ast) -> Result<(), Error> {
-        self._start();
+        self.entry();
         self.start_main();
 
         for expr in &ast.exprs {
@@ -28,26 +28,27 @@ where
         Ok(())
     }
 
-    fn _start(&mut self) {
-        write!(self.out, ".text\n\t").unwrap();
-        write!(self.out, ".global _start\n").unwrap();
+    fn entry(&mut self) {
+        asm!(self, ".text\n\t");
+        asm!(self, ".global _start\n");
 
-        write!(self.out, "_start:\n\t").unwrap();
-        write!(self.out, "xor %ebp, %ebp\n\t").unwrap();
-        write!(self.out, "call main\n\t").unwrap();
-        write!(self.out, "mov $1, %eax\n\t").unwrap();
-        write!(self.out, "int $0x80\n").unwrap();
+        asm!(self, "_start:\n\t");
+        asm!(self, "xor %ebp, %ebp\n\t");
+        asm!(self, "call main\n\t");
+        asm!(self, "mov $1, %edi\n\t");
+        asm!(self, "call exit\n");
     }
 
     fn start_main(&mut self) {
-        write!(self.out, "main:\n\t").unwrap();
-        write!(self.out, "push %rbp\n\t").unwrap();
-        write!(self.out, "mov %rsp, %rbp\n\t").unwrap();
+        asm!(self, "main:\n\t");
+        asm!(self, "push %rbp\n\t");
+        asm!(self, "mov %rsp, %rbp\n\t");
     }
 
     fn end_main(&mut self) {
-        write!(self.out, "pop %rbp\n\t").unwrap();
-        write!(self.out, "ret\n").unwrap();
+        asm!(self, "mov %rbp, %rsp\n\t");
+        asm!(self, "pop %rbp\n\t");
+        asm!(self, "ret\n");
     }
 
     fn expr(&mut self, expr: &Expr) -> Result<(), Error> {
@@ -55,10 +56,37 @@ where
             ExprKind::Lit(WithSpan {
                 value: Lit::Num(num),
                 ..
-            }) => write!(self.out, "mov ${}, %eax\n\t", num).unwrap(),
+            }) => asm!(self, "mov ${}, %eax\n\t", num),
             ExprKind::Lit(..) => unimplemented!(),
-            ExprKind::Var(i) => write!(self.out, "mov -{}(%rbp), %eax\n\t", (i + 1) * 4).unwrap(),
+            ExprKind::Var(i) => asm!(self, "mov -{}(%rbp), %eax\n\t", (i + 1) * 4),
             ExprKind::Binary(ref expr) => self.binary_op(expr)?,
+            ExprKind::Call(ref call) => self.call(call)?,
+        }
+
+        Ok(())
+    }
+
+    fn call(&mut self, call: &Call) -> Result<(), Error> {
+        const REGISTERS: [&str; 6] = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
+
+        for i in 1..call.args.len() {
+            asm!(self, "push %{}\n\t", REGISTERS[i]);
+        }
+
+        for arg in &call.args {
+            self.expr(arg)?;
+            asm!(self, "push %rax\n\t");
+        }
+
+        for i in 0..call.args.len() {
+            asm!(self, "pop %{}\n\t", REGISTERS[i]);
+        }
+
+        asm!(self, "mov $0, %eax\n\t");
+        asm!(self, "call {}\n\t", call.name);
+
+        for i in 1..call.args.len() {
+            asm!(self, "pop %{}\n\t", REGISTERS[i]);
         }
 
         Ok(())
@@ -70,7 +98,7 @@ where
 
             match expr.left.kind {
                 ExprKind::Var(i) => {
-                    write!(self.out, "mov %eax, -{}(%rbp)\n\t", (i + 1) * 4).unwrap()
+                    asm!(self, "mov %eax, -{}(%rbp)\n\t", (i + 1) * 4)
                 }
                 _ => {
                     return Err(Error::new(ErrorKind::ExpectedIdent, expr.left.span));
@@ -89,19 +117,19 @@ where
         };
 
         self.expr(&expr.left)?;
-        write!(self.out, "push %rax\n\t").unwrap();
+        asm!(self, "push %rax\n\t");
         self.expr(&expr.right)?;
 
         match expr.op.value {
             BinaryOp::Div => {
-                write!(self.out, "mov %eax, %ebx\n\t").unwrap();
-                write!(self.out, "pop %rax\n\t").unwrap();
-                write!(self.out, "mov $0, %edx\n\t").unwrap();
-                write!(self.out, "idiv %ebx\n\t").unwrap();
+                asm!(self, "mov %eax, %ebx\n\t");
+                asm!(self, "pop %rax\n\t");
+                asm!(self, "mov $0, %edx\n\t");
+                asm!(self, "idiv %ebx\n\t");
             }
             _ => {
-                write!(self.out, "pop %rbx\n\t").unwrap();
-                write!(self.out, "{} %ebx, %eax\n\t", op).unwrap();
+                asm!(self, "pop %rbx\n\t");
+                asm!(self, "{} %ebx, %eax\n\t", op);
             }
         }
 
@@ -109,18 +137,18 @@ where
     }
 
     // fn string(&mut self, str: &str) -> Result<(), Error> {
-    //     write!(self.out, "\t.data\n").unwrap();
-    //     write!(self.out, ".mydata:\n\nt").unwrap();
-    //     write!(self.out, ".string \"").unwrap();
+    //     asm!(self, "\t.data\n");
+    //     asm!(self, ".mydata:\n\nt");
+    //     asm!(self, ".string \"");
 
-    //     write!(self.out, "{}", str).unwrap();
+    //     asm!(self, "{}", str);
 
-    //     write!(self.out, "\"\n\t").unwrap();
-    //     write!(self.out, ".text\n\t").unwrap();
-    //     write!(self.out, ".global stringfn\n").unwrap();
-    //     write!(self.out, "stringfn:\n\t").unwrap();
-    //     write!(self.out, "lea .mydata(%rip), %rax\n\t").unwrap();
-    //     write!(self.out, "ret\n").unwrap();
+    //     asm!(self, "\"\n\t");
+    //     asm!(self, ".text\n\t");
+    //     asm!(self, ".global stringfn\n");
+    //     asm!(self, "stringfn:\n\t");
+    //     asm!(self, "lea .mydata(%rip), %rax\n\t");
+    //     asm!(self, "ret\n");
 
     //     Ok(())
     // }
@@ -160,3 +188,11 @@ impl<W: Write> Report<W> for Error {
         }
     }
 }
+
+macro_rules! _asm {
+    ($self:ident, $($tt:tt)*) => {
+        std::write!($self.out, $($tt)*).expect("failed to write output")
+    }
+}
+
+pub(self) use _asm as asm;

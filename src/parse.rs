@@ -78,7 +78,7 @@ impl<'a> Parser<'a> {
                 TokenKind::Mul => BinaryOp::Mul,
                 TokenKind::Div => BinaryOp::Div,
                 TokenKind::Assign => BinaryOp::Assign,
-                TokenKind::Semi => return Ok(Some(expr)),
+                TokenKind::Semi | TokenKind::CloseParen => return Ok(Some(expr)),
                 _ => return Err(Error::new(ErrorKind::ExpectedOperator, token.span)),
             };
 
@@ -88,9 +88,7 @@ impl<'a> Parser<'a> {
 
             self.chomp();
 
-            let right = self
-                .expr(op.precedence() + 1)?
-                .ok_or_else(|| Error::new(ErrorKind::UnexpectedEof, Span::EOF))?;
+            let right = self.expr(op.precedence() + 1)?.ok_or(Error::EOF)?;
 
             expr = Expr {
                 span: expr.span + right.span,
@@ -117,6 +115,11 @@ impl<'a> Parser<'a> {
                 ExprKind::Lit(WithSpan::new(Lit::String(lit.to_owned()), token.span))
             }
             TokenKind::Ident(var) => {
+                if self.peek()?.map(|t| t.kind) == Some(TokenKind::OpenParen) {
+                    self.chomp();
+                    return self.func_call(var, token.span);
+                }
+
                 let i = self
                     .vars
                     .iter()
@@ -138,6 +141,37 @@ impl<'a> Parser<'a> {
             span: token.span,
         }))
     }
+
+    fn func_call(&mut self, ident: &str, span: Span) -> Result<Option<Expr>, Error> {
+        let mut args = Vec::new();
+
+        let end = loop {
+            match self.peek() {
+                Ok(Some(token)) if token.kind == TokenKind::CloseParen => {
+                    break token;
+                }
+                _ => {}
+            }
+
+            let arg = self.expr(0)?.ok_or(Error::EOF)?;
+            args.push(arg);
+
+            let token = self.next()?.ok_or(Error::EOF)?;
+            match token.kind {
+                TokenKind::CloseParen => break token,
+                TokenKind::Comma => continue,
+                _ => return Err(Error::new(ErrorKind::ExpectedExpression, token.span)),
+            }
+        };
+
+        Ok(Some(Expr {
+            kind: ExprKind::Call(Call {
+                name: ident.to_owned(),
+                args,
+            }),
+            span: span + end.span,
+        }))
+    }
 }
 
 pub struct Ast {
@@ -157,7 +191,13 @@ pub struct Expr {
 pub enum ExprKind {
     Lit(WithSpan<Lit>),
     Binary(BinaryExpr),
+    Call(Call),
     Var(usize),
+}
+
+pub struct Call {
+    pub name: String,
+    pub args: Vec<Expr>,
 }
 
 pub enum Lit {
@@ -195,21 +235,6 @@ pub struct Error {
     pub span: Span,
 }
 
-impl From<lex::Error> for Error {
-    fn from(err: lex::Error) -> Self {
-        Self {
-            kind: ErrorKind::Lex(err),
-            span: err.span,
-        }
-    }
-}
-
-impl Error {
-    fn new(kind: ErrorKind, span: Span) -> Self {
-        Self { kind, span }
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ErrorKind {
     ExpectedNumber,
@@ -220,9 +245,14 @@ pub enum ErrorKind {
     Lex(lex::Error),
 }
 
-impl Spanned for Error {
-    fn span(&self) -> Span {
-        self.span
+impl Error {
+    const EOF: Error = Error {
+        kind: ErrorKind::UnexpectedEof,
+        span: Span::EOF,
+    };
+
+    fn new(kind: ErrorKind, span: Span) -> Self {
+        Self { kind, span }
     }
 }
 
@@ -246,6 +276,21 @@ impl<W: Write> Report<W> for Error {
             UnterminatedExpression => write!(f.out, "Unterminated expression"),
             Lex(ref err) => err.report(f),
         }
+    }
+}
+
+impl From<lex::Error> for Error {
+    fn from(err: lex::Error) -> Self {
+        Self {
+            kind: ErrorKind::Lex(err),
+            span: err.span,
+        }
+    }
+}
+
+impl Spanned for Error {
+    fn span(&self) -> Span {
+        self.span
     }
 }
 

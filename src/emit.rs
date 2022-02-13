@@ -39,9 +39,12 @@ pub fn emit(ast: &Ast) -> Result<(), codegen::Error> {
         .expect("failed to assemble output");
 
     std::process::Command::new("ld")
-        .arg(&out_file)
         .arg("-o")
         .arg("out")
+        .arg("--dynamic-linker")
+        .arg("/lib64/ld-linux-x86-64.so.2")
+        .arg(&out_file)
+        .arg("-lc")
         .status()
         .expect("linking failed");
 
