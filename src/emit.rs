@@ -1,5 +1,6 @@
 use crate::codegen::{self, Codegen};
 use crate::parse::Ast;
+use crate::rand;
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
@@ -18,7 +19,7 @@ pub fn emit(ast: &Ast) -> Result<(), codegen::Error> {
 
     let hash = {
         let mut hasher = DefaultHasher::new();
-        hasher.write_u64(fastrand::u64(..));
+        hasher.write_u64(rand::rand());
         hasher.finish()
     };
 

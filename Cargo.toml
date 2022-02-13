@@ -4,7 +4,6 @@ license = "MIT"
 version = "0.1.0"
 edition = "2018"
 authors = ["ibraheemdev <ibrah1440@gmail.com>"]
-description = "A C compiler, written in Rust."
+description = "..."
 
 [dependencies]
-fastrand = "1.7.0"

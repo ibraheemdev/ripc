@@ -5,6 +5,7 @@ mod emit;
 mod error;
 mod lex;
 mod parse;
+mod rand;
 mod span;
 
 pub use codegen::Codegen;
